@@ -63,7 +63,7 @@ graph TD;
     A[Start Program] --> B[Load Exchange Addresses from CSV]
     B --> C[Ask User for Ethereum Address]
     C --> D[Fetch All Transactions for Address]
-    D --> E[Find Deposit Addresses (where user sent money)]
+    D --> E[Find Deposit Addresses - where user sent money]
     E --> F[For Each Deposit Address: Analyze]
     F --> G{Is it a contract or high-activity?}
     G -- Yes --> H[Skip]
