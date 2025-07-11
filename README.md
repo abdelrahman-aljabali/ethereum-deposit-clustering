@@ -60,21 +60,21 @@ This tool helps you analyze Ethereum blockchain addresses to find groups ("clust
 
 ```mermaid
 graph TD;
-    A[Start Program] --> B[Load Exchange Addresses from CSV]
-    B --> C[Ask User for Ethereum Address]
-    C --> D[Fetch All Transactions for Address]
-    D --> E[Find Deposit Addresses - where user sent money]
-    E --> F[For Each Deposit Address: Analyze]
-    F --> G{Is it a contract or high-activity?}
+    A[Start Program] --> B[Load Exchange<br/>Addresses from CSV]
+    B --> C[Ask User for<br/>Ethereum Address]
+    C --> D[Fetch All Transactions<br/>for Address]
+    D --> E[Find Deposit Addresses<br/>- where user sent money]
+    E --> F[For Each Deposit Address:<br/>Analyze]
+    F --> G{Is it a contract<br/>or high-activity?}
     G -- Yes --> H[Skip]
-    G -- No --> I[Find Unique Senders]
-    I --> J{Does it forward to Exchange?}
+    G -- No --> I[Find Unique<br/>Senders]
+    I --> J{Does it forward<br/>to Exchange?}
     J -- Yes --> K[Save as Cluster]
     J -- No --> L[Skip]
     K --> M[Show Results]
     L --> M
     H --> M
-    M --> N{User wants to analyze another address?}
+    M --> N{User wants to<br/>analyze another address?}
     N -- Yes --> C
     N -- No --> O[End]
 ```
