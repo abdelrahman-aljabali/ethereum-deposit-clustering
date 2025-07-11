@@ -110,17 +110,9 @@ graph TD;
    ```bash
    python etherscan_deposit_clustering.py
    ```
-3. When prompted, enter an Ethereum address (starts with `0x`).
+3. When prompted, enter an Ethereum address.
 4. Wait for the analysis to complete. The tool will show you any clusters it finds.
 5. Enter another address or type `quit` to exit.
-
----
-
-## Troubleshooting
-
-- If you see errors about the CSV file, make sure it exists and is formatted correctly.
-- If you get API errors, you may be making too many requests too quickly. Wait a bit and try again, or use your own API key.
-- If the script says "No clusters found," it means it didn’t find any groups matching the criteria for the address you entered.
 
 ---
 
