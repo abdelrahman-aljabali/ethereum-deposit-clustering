@@ -80,30 +80,30 @@ This tool is valuable for blockchain research, anti-money laundering efforts, or
 
 ```mermaid
 graph TD;
-    A[Start Program] --> B{Load Exchange Addresses<br/>from CSV};
+    A[Start Program] --> B{Load Exchange Addresses\nfrom CSV};
     B --> C[Display Mode Options];
     C --> D{User Selects Mode};
 
-    D -- "Mode 1: Forward-Clustering" --> E[Ask User for<br/>Ethereum Address (User Address)];
-    E --> F[Fetch All Transactions<br/>for User Address];
-    F --> G[Find All Deposit Addresses<br/>(where User sent money)];
+    D -- "Mode 1: Forward-Clustering" --> E[Ask User for\nEthereum Address (User Address)];
+    E --> F[Fetch All Transactions\nfor User Address];
+    F --> G[Find All Deposit Addresses\n(where User sent money)];
     G --> H{For Each Deposit Address: Analyze};
-    H -- "Is it a contract<br/>or high-activity?" --> I[Skip];
-    H -- "No" --> J[Find Unique Senders<br/>to Deposit Address];
-    J --> K{Does Deposit Forward<br/>to Exchange?};
+    H -- "Is it a contract\nor high-activity?" --> I[Skip];
+    H -- "No" --> J[Find Unique Senders\nto Deposit Address];
+    J --> K{Does Deposit Forward\nto Exchange?};
     K -- "Yes & >1 Sender" --> L[Save as Cluster];
     K -- "No or <=1 Sender" --> M[Skip];
     L --> N[Show Forward-Clustering Results];
     M --> N;
     I --> N;
 
-    D -- "Mode 2: Backward-Clustering" --> O[Ask User for<br/>Ethereum Address (Target Address)];
-    O --> P[Fetch All Transactions<br/>for Target Address];
-    P --> Q[Identify Incoming Transactions<br/>from Known Exchanges];
+    D -- "Mode 2: Backward-Clustering" --> O[Ask User for\nEthereum Address (Target Address)];
+    O --> P[Fetch All Transactions\nfor Target Address];
+    P --> Q[Identify Incoming Transactions\nfrom Known Exchanges];
     Q --> R[Aggregate Funding Source Details];
     R --> S[Show Backward-Clustering Results];
 
-    N --> T{Analyze Another<br/>Address?};
+    N --> T{Analyze Another\nAddress?};
     S --> T;
     T -- "Yes" --> C;
     T -- "No" --> U[End];
