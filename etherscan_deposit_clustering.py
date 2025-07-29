@@ -174,13 +174,14 @@ def is_contract(address):
 # Sie überspringt Smart Contracts (außer sie sind als Exchange bekannt).
 # Sie holt alle Transaktionen (normal und intern) für die Adresse.
 # Wenn es zu viele Transaktionen gibt (>=10.000), wird die Adresse übersprungen (wahrscheinlich Service/Exchange).
-# Sie sammelt alle eindeutigen Absender, die an diese Adresse eingezahlt haben (außer Exchanges und die Adresse selbst).
+# Sie sammelt alle eindeutigen Absender, die an diese Adresse eingezahlt haben (außer Exchanges und die Adresse selbst),
+# einschließlich der Anzahl ihrer Transaktionen und des gesamten überwiesenen ETH-Betrags.
 # Wenn es zu viele verschiedene Absender gibt (> sender_threshold), wird die Adresse übersprungen.
 # Dann prüft sie, ob die Adresse Geld an eine bekannte Exchange weitergeleitet hat.
 # Wenn ja und es mehr als einen Absender gibt, wird ein Cluster mit allen Infos zurückgegeben.
 
 def analyze_deposit(deposit, exchange_set, sender_threshold=1000):
-    """Analyze deposit address for clustering: multiple senders to deposit, deposit forwards to exchange"""
+    """Analyze deposit address for clustering with transaction metrics"""
     # Überspringe Smart Contracts, außer sie sind als Exchange bekannt
     if deposit not in exchange_set and is_contract(deposit):
         print(f"⏩ Skipping contract address {deposit}")
@@ -200,18 +201,23 @@ def analyze_deposit(deposit, exchange_set, sender_threshold=1000):
             print(f"⏩ Skipping high-activity address {deposit} (>=10,000 transactions, likely a service)")
             return None
 
-        # Sammle alle eindeutigen Absender, die an diese Adresse eingezahlt haben
-        incoming_senders = set()
+        # Sammle Absender mit Transaktionsanzahl und Gesamtbetrag
+        sender_stats = {}
         for tx in all_txs:
             tx_from = tx.get('from', '').lower()
             tx_to = tx.get('to', '').lower()
+            value_eth = int(tx.get('value', 0)) / 10**18  # Umrechnung von Wei zu ETH
+            
             # Nur echte Einzahlungen von Nicht-Exchanges und nicht von sich selbst
             if tx_to == deposit and tx_from not in exchange_set and tx_from != deposit:
-                incoming_senders.add(tx_from)
+                if tx_from not in sender_stats:
+                    sender_stats[tx_from] = {'count': 0, 'total_eth': 0.0}
+                sender_stats[tx_from]['count'] += 1
+                sender_stats[tx_from]['total_eth'] += value_eth
 
         # Überspringe Adressen mit zu vielen verschiedenen Absendern
-        if len(incoming_senders) > sender_threshold:
-            print(f"⏩ Skipping high-activity address {deposit[:8]} ({len(incoming_senders)} unique senders)")
+        if len(sender_stats) > sender_threshold:
+            print(f"⏩ Skipping high-activity address {deposit[:8]} ({len(sender_stats)} unique senders)")
             return None
 
         # Prüfe, ob die Deposit-Adresse Geld an eine bekannte Exchange weitergeleitet hat
@@ -223,18 +229,26 @@ def analyze_deposit(deposit, exchange_set, sender_threshold=1000):
                 forwarded_to_exchange = tx_to
                 break
 
-        # Wenn ein Cluster gefunden wurde, gib die Infos zurück
-        if forwarded_to_exchange and len(incoming_senders) > 1:
+        # Wenn ein Cluster gefunden wurde, gib die erweiterten Infos zurück
+        if forwarded_to_exchange and len(sender_stats) > 1:
             print(f"✓ Found cluster at {deposit}".ljust(40))
+            # Sortiere Absender nach Transaktionsanzahl (absteigend)
+            sorted_senders = sorted(
+                sender_stats.items(),
+                key=lambda x: x[1]['count'],
+                reverse=True
+            )
             return {
                 'deposit': deposit,
                 'exchange': forwarded_to_exchange,
-                'related_users': list(incoming_senders),
-                'cluster_size': len(incoming_senders)
+                'related_users': [addr for addr, _ in sorted_senders],
+                'user_stats': sender_stats,  # Enthält Count und ETH-Beträge
+                'cluster_size': len(sender_stats)
             }
     except Exception as e:
         print(f"⚠️ Failed to analyze {deposit[:8]}: {str(e)[:50]}".ljust(40))
     return None
+
 
 # Diese Funktion sucht für eine Nutzeradresse nach möglichen Clustern.
 # Sie holt alle Transaktionen der Nutzeradresse und extrahiert alle Adressen, an die der Nutzer Geld geschickt hat (Deposits).
@@ -305,13 +319,15 @@ def cluster_addresses(user_address, exchange_addresses):
     # Sortiere die Cluster nach Größe (absteigend)
     return sorted(clusters, key=lambda x: x['cluster_size'], reverse=True)
 
+
+
 # Diese Funktion zeigt die gefundenen Cluster übersichtlich an.
 # Für jeden Cluster werden die Größe, die Deposit-Adresse, die zugehörige Exchange (mit Label, falls vorhanden)
-# und die ersten 10 zugehörigen Nutzeradressen ausgegeben.
+# und die ersten 10 zugehörigen Nutzeradressen mit vollständiger Adresse, Transaktionsanzahl und Gesamtbetrag ausgegeben.
 # Wenn es mehr als 10 Nutzer gibt, wird das ebenfalls angezeigt.
 
 def display_results(clusters, exchange_labels=None):
-    """Professional results presentation with exchange labels"""
+    """Professional results presentation with full addresses and transaction metrics"""
     if not clusters:
         print("\n💡 No deposit clusters found")
         return
@@ -332,45 +348,210 @@ def display_results(clusters, exchange_labels=None):
         if not label:
             label = exchange_labels.get(exchange.lower(), exchange)
         print(f"🏦 Exchange: {label} ({exchange})")
-        print("\n👥 Related addresses:")
+        print("\n👥 Related addresses (Transactions | Total ETH):")
+        
+        # Zeige genau 10 Adressen mit voller Länge an
         for j, addr in enumerate(cluster['related_users'][:10], 1):
-            print(f"  {j}. {addr}")
+            stats = cluster['user_stats'][addr]
+            print(
+                f"  {j}. {addr} "
+                f"| Tx: {stats['count']} "
+                f"| ETH: {stats['total_eth']:.4f}"
+            )
+            
         if len(cluster['related_users']) > 10:
             print(f"  ... and {len(cluster['related_users']) - 10} more")
         print("─" * 40)
 
-# Das ist die Hauptfunktion des Programms.
-# Sie lädt die Exchange-Adressen und Labels, fragt den Nutzer nach einer Ethereum-Adresse,
-# startet die Analyse (Cluster-Suche) und zeigt die Ergebnisse an.
-# Das Ganze läuft in einer Schleife, bis der Nutzer 'quit' eingibt.
+
+
+    
+    # Findet alle gespeicherten Adressen, die Gelder an die Zieladresse gesendet haben.
+    # Args:
+    #    target_address: Die zu analysierende Ethereum-Adresse
+    #    exchange_addresses: Liste der bekannten Exchange-Adressen
+    #    exchange_labels: Optionales Dictionary mit Labels für die Adressen
+    # Returns:
+    #    Dictionary mit Funding-Quellen und Metadaten
+    
+
+def find_funding_sources(target_address, exchange_addresses, exchange_labels=None):
+    import datetime
+
+    target_address = target_address.lower()
+    exchange_set = {addr.lower() for addr in exchange_addresses}
+    funding_sources = {}
+
+    print(f"\n🔍 Analysiere Funding-Quellen für: {target_address}")
+
+    # Alle Transaktionen abrufen (normal und intern)
+    print("📥 Lade Transaktionen...")
+    normal_txs = get_all_transactions(target_address, 'txlist')
+    internal_txs = get_all_transactions(target_address, 'txlistinternal')
+    all_txs = normal_txs + internal_txs
+
+    if not all_txs:
+        print("❌ Keine Transaktionen für diese Adresse gefunden")
+        return {}
+
+    print(f"✅ {len(all_txs)} Transaktionen gefunden (normal + intern)")
+
+    # Analysiere jede Transaktion
+    for tx in all_txs:
+        tx_from = tx.get('from', '').lower()
+        tx_to = tx.get('to', '').lower()
+
+        if tx_to == target_address and tx_from in exchange_set:
+            label = exchange_labels.get(tx_from, tx_from) if exchange_labels else tx_from
+            value_eth = int(tx.get('value', 0)) / 1e18
+            timestamp = int(tx.get('timeStamp', 0))
+            dt = datetime.datetime.fromtimestamp(timestamp)
+
+            if tx_from not in funding_sources:
+                funding_sources[tx_from] = {
+                    'label': label,
+                    'count': 0,
+                    'values': [],
+                    'timestamps': [],
+                    'first_seen': timestamp,
+                    'last_seen': timestamp
+                }
+
+            funding_sources[tx_from]['count'] += 1
+            funding_sources[tx_from]['values'].append(value_eth)
+            funding_sources[tx_from]['timestamps'].append(dt)
+
+            if timestamp < funding_sources[tx_from]['first_seen']:
+                funding_sources[tx_from]['first_seen'] = timestamp
+            if timestamp > funding_sources[tx_from]['last_seen']:
+                funding_sources[tx_from]['last_seen'] = timestamp
+
+    return funding_sources
+
+
+def get_activity_bar(timestamps, slots=12):
+    if not timestamps:
+        return "| " + " " * slots + " |"
+
+    timestamps = sorted(timestamps)
+    start = timestamps[0]
+    end = timestamps[-1]
+
+    if start == end:
+        return "| " + "■".ljust(slots) + " |"
+
+    total_seconds = (end - start).total_seconds()
+    bucket_size = total_seconds / slots
+    buckets = [0] * slots
+
+    for ts in timestamps:
+        index = int((ts - start).total_seconds() / bucket_size)
+        index = min(index, slots - 1)
+        buckets[index] += 1
+
+    return "| " + ''.join("■" if count else ' ' for count in buckets) + " |"
+
+
+
+
+
+#    Zeigt die gefundenen Funding-Quellen in lesbarem Format an.
+#    Args:
+#     funding_sources: Dictionary mit den Funding-Quellen
+
+def display_funding_sources(funding_sources):
+    if not funding_sources:
+        print("\n💡 Keine Funding-Quellen aus bekannten Adressen gefunden")
+        return
+
+    print("\n🎯 Gefundene Funding-Quellen:")
+    print("═" * 60)
+
+    # Sort by address to have consistent output order
+    sorted_items = sorted(funding_sources.items(), key=lambda item: item[0])
+
+    seen_addresses = set()
+
+    for i, (addr, data) in enumerate(sorted_items, 1):
+        # Skip duplicates if any
+        if addr in seen_addresses:
+            continue
+        seen_addresses.add(addr)
+
+        print(f"\n{i}. {data['label']} ({addr})")
+        print(f"   Transaktionen: {data['count']}")
+
+        if data['first_seen'] != 'unbekannt':
+            print(f"   Erstmals gesehen: {time.strftime('%d.%m.%Y', time.localtime(int(data['first_seen'])))}")
+        if data['last_seen'] != 'unbekannt':
+            print(f"   Zuletzt gesehen: {time.strftime('%d.%m.%Y', time.localtime(int(data['last_seen'])))}")
+
+        if data.get('values'):
+            total_amount = sum(data['values'])
+            avg_amount = total_amount / len(data['values'])
+            print(f"   ⛽️ Ø Betrag: {avg_amount:.4f} ETH")
+            print(f"   💰 Total Betrag: {total_amount:.4f} ETH")
+
+        if len(data.get('timestamps', [])) > 1:
+            time_spread = (max(data['timestamps']) - min(data['timestamps'])).days
+        else:
+            time_spread = 0
+        print(f"   🕒 Zeitspanne: {time_spread} Tage")
+
+        print(f"   📊 Aktivität: {get_activity_bar(data['timestamps'])}")
+
+
+
 
 def main():
+    """
+    Hauptfunktion des Programms mit erweitertem Menü für Forward/Backward-Clustering.
+    """
     print("\n" + "═" * 60)
-    print("🔗 Ethereum Deposit Clustering Tool".center(60))
+    print("🔗 Ethereum Cluster-Analyse Tool".center(60))
     print("═" * 60 + "\n")
-    print("📂 Loading exchange addresses...")
+    print("📂 Lade Exchange-Adressen...")
     exchange_addresses, exchange_labels = load_exchange_addresses(CSV_FILE)
     if not exchange_addresses:
-        print("❌ Critical: No exchange addresses loaded. Check CSV file.")
+        print("❌ Fehler: Keine Exchange-Adressen geladen. CSV-Datei prüfen.")
         return
+    
     while True:
-        # Frage den Nutzer nach einer Ethereum-Adresse
-        user_address = input("\n🔢 Enter Ethereum address (or 'quit'): ").strip().lower()
-        if user_address in ('quit', 'exit'):
-            print("\n🛑 Session ended")
+        print("\nAnalyse-Modus wählen:")
+        print("1. Forward-Clustering (User - Deposit Address - Exchnage Wallet)")
+        print("2. Backward-Clustering (Geldquellen finden)")
+        print("3. Beenden")
+        mode = input("> ").strip()
+
+        if mode == '3' or mode.lower() in ('quit', 'exit', 'beenden'):
+            print("\n🛑 Sitzung beendet")
             break
-        if not user_address.startswith('0x') or len(user_address) != 42:
-            print("⚠️ Invalid Ethereum address format")
+
+        address = input("\n🔢 Ethereum-Adresse eingeben: ").strip().lower()
+        if not address.startswith('0x') or len(address) != 42:
+            print("⚠️ Ungültiges Ethereum-Adressformat")
             continue
+
         print("\n" + "─" * 60)
         start_time = time.time()
-        # Starte die Cluster-Analyse
-        clusters = cluster_addresses(user_address, exchange_addresses)
-        # Zeige die Ergebnisse an
-        display_results(clusters, exchange_labels)
+
+        if mode == '1':
+            # Forward-Clustering (Originalfunktionalität)
+            clusters = cluster_addresses(address, exchange_addresses)
+            display_results(clusters, exchange_labels)
+        elif mode == '2':
+            # Backward-Clustering (Neue Funktionalität)
+            funding_sources = find_funding_sources(address, exchange_addresses, exchange_labels)
+            display_funding_sources(funding_sources)
+
+        else:
+            print("⚠️ Ungültige Modus-Auswahl")
+            continue
+
         elapsed = time.time() - start_time
-        print(f"\n⏱️  Analysis completed in {elapsed:.2f} seconds ({elapsed/60:.2f} minutes)")
+        print(f"\n⏱️  Analyse abgeschlossen in {elapsed:.2f} Sekunden ({elapsed/60:.2f} Minuten)")
         print("─" * 60)
 
 if __name__ == '__main__':
     main()
+
