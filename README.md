@@ -38,7 +38,7 @@ This tool helps you analyze Ethereum blockchain addresses to find groups ("clust
 - For each deposit address, the tool:
   - Checks if it is a smart contract (and skips it unless it's an exchange)
   - Downloads all transactions for that deposit address
-  - Skips addresses with too many transactions (likely a service, not a person)
+  - Skips addresses with too many transactions (likely a service like OpenSea or another, not a person)
   - Finds all unique senders to that deposit address (excluding itself and exchanges)
   - Skips addresses with too many unique senders (likely a service)
   - Checks if the deposit address forwards money to a known exchange
