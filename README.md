@@ -37,42 +37,35 @@ This tool is valuable for blockchain research, anti-money laundering efforts, or
 ## How It Works (Step-by-Step)
 
 ### 1. **Load Exchange Addresses**
-    * The program reads a CSV file (`collected_addresses.csv`) that lists known exchange addresses and their associated labels (e.g., "Binance"). This data is crucial for identifying exchange-related transactions.
+    * Reads CSV file with known exchange addresses and labels
 
 ### 2. **Select Analysis Mode**
-    * You choose between "Forward-Clustering" or "Backward-Clustering" based on your research goal.
+    * Choose Forward-Clustering or Backward-Clustering
 
-### 3. **Ask for User Input**
-    * You're prompted to enter the Ethereum address you wish to analyze (a 42-character string starting with `0x`). You can analyze multiple addresses, one at a time.
+### 3. **Enter Target Address**
+    * Input the Ethereum address to analyze
 
 ### 4. **Fetch Transactions**
-    * For the entered address, the tool downloads all normal and internal transactions from the Etherscan API, combining them into a single list for comprehensive analysis.
+    * Downloads all transactions from Etherscan API
 
-### 5. **Mode-Specific Analysis**
+### 5. **Analyze Based on Mode**
 
-#### **Forward-Clustering (Mode 1)**
-    * **Find Deposit Addresses:** The tool identifies all addresses to which the entered user address has sent money.
-    * **Analyze Each Deposit Address:** For each identified deposit address, the tool performs the following:
-        * Checks if it's a smart contract (and skips it unless it's a recognized exchange address).
-        * Downloads all transactions associated with that deposit address.
-        * Skips addresses with an excessive number of transactions (likely indicating a service rather than a personal deposit).
-        * Identifies all unique senders to that deposit address (excluding exchanges and the deposit address itself).
-        * Skips addresses with too many unique senders (again, to filter out large services).
-        * Determines if the deposit address subsequently forwards funds to a known exchange.
-        * If a "cluster" is identified (multiple users sending to a shared deposit address that then forwards to an exchange), this information is saved, including transaction counts and ETH amounts for each sender.
+#### **Forward-Clustering**
+    * Finds where your address sent money
+    * Checks if others also used those same deposit addresses
+    * Identifies if deposits forward to exchanges
+    * Groups related addresses into clusters
 
-#### **Backward-Clustering (Mode 2)**
-    * **Identify Incoming Transactions:** The tool examines all transactions where the entered address is the recipient.
-    * **Pinpoint Exchange Sources:** It specifically identifies transactions where the sender is a known exchange address.
-    * **Gather Funding Details:** For each identified funding source from an exchange, it aggregates data such as the number of transactions, total ETH received, and timestamps of the first and last interactions.
+#### **Backward-Clustering**
+    * Finds incoming transactions from exchanges
+    * Aggregates funding source details and metrics
 
-### 6. **Show Results**
-    * The tool prints out the analysis results in a clear format:
-        * **For Forward-Clustering:** Details on each cluster, including the deposit address, the linked exchange (with label), the associated user addresses (up to 10 with full address, transaction count, and total ETH), and the cluster size.
-        * **For Backward-Clustering:** Information on each funding source from an exchange, including the exchange label, total transactions, total and average ETH amounts, first/last seen dates, and a visual activity bar.
+### 6. **Display Results**
+    * Shows clusters with deposit addresses, exchanges, and related users
+    * Presents funding sources with transaction counts and amounts
 
-### 7. **Repeat or Quit**
-    * You can choose to analyze another address or type `quit` to exit the program.
+### 7. **Continue or Exit**
+    * Option to analyze another address or quit
 
 ---
 
@@ -80,33 +73,46 @@ This tool is valuable for blockchain research, anti-money laundering efforts, or
 
 ```mermaid
 graph TD;
-    A[Start Program] --> B{Load Exchange Addresses\nfrom CSV};
-    B --> C[Display Mode Options];
-    C --> D{User Selects Mode};
+    A[Start Program] --> B[Load Exchange Addresses from CSV];
+    B --> C[Choose Analysis Mode];
+    
+    C --> D1[Mode 1: Forward Clustering];
+    C --> D2[Mode 2: Backward Clustering];
 
-    D -- "Mode 1: Forward-Clustering" --> E[Ask User for\nEthereum Address (User Address)];
-    E --> F[Fetch All Transactions\nfor User Address];
-    F --> G[Find All Deposit Addresses\n(where User sent money)];
-    G --> H{For Each Deposit Address: Analyze};
-    H -- "Is it a contract\nor high-activity?" --> I[Skip];
-    H -- "No" --> J[Find Unique Senders\nto Deposit Address];
-    J --> K{Does Deposit Forward\nto Exchange?};
-    K -- "Yes & >1 Sender" --> L[Save as Cluster];
-    K -- "No or <=1 Sender" --> M[Skip];
-    L --> N[Show Forward-Clustering Results];
-    M --> N;
-    I --> N;
+    %% Forward Clustering Path
+    D1 --> E1[Enter Ethereum Address to Analyze];
+    E1 --> F1[Get All Transactions for This Address];
+    F1 --> G1[Find Where User Sent Money];
+    G1 --> H1[Check Each Deposit Address];
+    
+    H1 --> I1{Is this address a contract or very busy?};
+    I1 -->|Yes| J1[Skip this address];
+    I1 -->|No| K1[Find who else sent money here];
+    
+    K1 --> L1{Does this deposit send money to exchanges?};
+    L1 -->|No| M1[Skip this address];
+    L1 -->|Yes| N1{Are there multiple people who sent money here?};
+    
+    N1 -->|Only 1 person| O1[Skip this address];
+    N1 -->|Multiple people| P1[Save all these addresses as related cluster];
+    
+    P1 --> Q1[Show Forward Clustering Results];
+    J1 --> Q1;
+    M1 --> Q1;
+    O1 --> Q1;
 
-    D -- "Mode 2: Backward-Clustering" --> O[Ask User for\nEthereum Address (Target Address)];
-    O --> P[Fetch All Transactions\nfor Target Address];
-    P --> Q[Identify Incoming Transactions\nfrom Known Exchanges];
-    Q --> R[Aggregate Funding Source Details];
-    R --> S[Show Backward-Clustering Results];
+    %% Backward Clustering Path  
+    D2 --> E2[Enter Target Address to Analyze];
+    E2 --> F2[Get All Transactions for Target Address];
+    F2 --> G2[Find Money Coming FROM Exchanges];
+    G2 --> H2[Collect Exchange Funding Details];
+    H2 --> I2[Show Backward Clustering Results];
 
-    N --> T{Analyze Another\nAddress?};
-    S --> T;
-    T -- "Yes" --> C;
-    T -- "No" --> U[End];
+    %% Continue or End
+    Q1 --> R[Want to analyze another address?];
+    I2 --> R;
+    R -->|Yes| C;
+    R -->|No| S[End Program];
 ```
 
 ---
