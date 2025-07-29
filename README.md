@@ -73,46 +73,46 @@ This tool is valuable for blockchain research, anti-money laundering efforts, or
 
 ```mermaid
 graph TD;
-    A[Start Program] --> B[Load Exchange Addresses from CSV];
-    B --> C[Choose Analysis Mode];
+    A["Start<br/>Program"] --> B["Load Exchange<br/>Addresses from CSV"];
+    B --> C["Choose<br/>Analysis Mode"];
     
-    C --> D1[Mode 1: Forward Clustering];
-    C --> D2[Mode 2: Backward Clustering];
+    C --> D1["Mode 1:<br/>Forward Clustering"];
+    C --> D2["Mode 2:<br/>Backward Clustering"];
 
     %% Forward Clustering Path
-    D1 --> E1[Enter Ethereum Address to Analyze];
-    E1 --> F1[Get All Transactions for This Address];
-    F1 --> G1[Find Where User Sent Money];
-    G1 --> H1[Check Each Deposit Address];
+    D1 --> E1["Enter Ethereum<br/>Address to Analyze"];
+    E1 --> F1["Get All Transactions<br/>for This Address"];
+    F1 --> G1["Find Where<br/>User Sent Money"];
+    G1 --> H1["Check Each<br/>Deposit Address"];
     
-    H1 --> I1{Is this address a contract or very busy?};
-    I1 -->|Yes| J1[Skip this address];
-    I1 -->|No| K1[Find who else sent money here];
+    H1 --> I1{"Is this address a<br/>contract or very busy?"};
+    I1 -->|Yes| J1["Skip<br/>this address"];
+    I1 -->|No| K1["Find who else<br/>sent money here"];
     
-    K1 --> L1{Does this deposit send money to exchanges?};
-    L1 -->|No| M1[Skip this address];
-    L1 -->|Yes| N1{Are there multiple people who sent money here?};
+    K1 --> L1{"Does this deposit send<br/>money to exchanges?"};
+    L1 -->|No| M1["Skip<br/>this address"];
+    L1 -->|Yes| N1{"Are there multiple people<br/>who sent money here?"};
     
-    N1 -->|Only 1 person| O1[Skip this address];
-    N1 -->|Multiple people| P1[Save all these addresses as related cluster];
+    N1 -->|Only 1 person| O1["Skip<br/>this address"];
+    N1 -->|Multiple people| P1["Save all these addresses<br/>as related cluster"];
     
-    P1 --> Q1[Show Forward Clustering Results];
+    P1 --> Q1["Show Forward<br/>Clustering Results"];
     J1 --> Q1;
     M1 --> Q1;
     O1 --> Q1;
 
     %% Backward Clustering Path  
-    D2 --> E2[Enter Target Address to Analyze];
-    E2 --> F2[Get All Transactions for Target Address];
-    F2 --> G2[Find Money Coming FROM Exchanges];
-    G2 --> H2[Collect Exchange Funding Details];
-    H2 --> I2[Show Backward Clustering Results];
+    D2 --> E2["Enter Target<br/>Address to Analyze"];
+    E2 --> F2["Get All Transactions<br/>for Target Address"];
+    F2 --> G2["Find Money Coming<br/>FROM Exchanges"];
+    G2 --> H2["Collect Exchange<br/>Funding Details"];
+    H2 --> I2["Show Backward<br/>Clustering Results"];
 
     %% Continue or End
-    Q1 --> R[Want to analyze another address?];
+    Q1 --> R["Want to analyze<br/>another address?"];
     I2 --> R;
     R -->|Yes| C;
-    R -->|No| S[End Program];
+    R -->|No| S["End<br/>Program"];
 ```
 
 ---
