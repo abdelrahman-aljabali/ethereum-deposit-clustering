@@ -162,7 +162,6 @@ def is_contract(address):
         if data.get('status') == '1' and data.get('result'):
             contract_info = data['result'][0]
             # Wenn ContractName nicht leer ist, ist es ein Contract
-            # ContractName ist der Name des Contracts, der in der Contract-Datei steht
             if contract_info.get('ContractName'):
                 return True
         return False
