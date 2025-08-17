@@ -15,7 +15,7 @@ CSV_FILE = 'collected_addresses.csv'
 CACHE_DIR = Path('etherscan_cache')
 CACHE_DIR.mkdir(exist_ok=True)
 REQUEST_DELAY = 0.55
-MAX_WORKERS = 1  
+MAX_WORKERS = 1
 MAX_RESULTS = 1000  
 
 # Diese Funktion lädt Exchange-Adressen und deren Labels aus einer CSV-Datei.
@@ -170,84 +170,216 @@ def is_contract(address):
         # Im Zweifel als Contract behandeln
         return True
 
-# Diese Funktion analysiert eine Deposit-Adresse, um mögliche Cluster zu finden.
-# Sie überspringt Smart Contracts (außer sie sind als Exchange bekannt).
-# Sie holt alle Transaktionen (normal und intern) für die Adresse.
-# Wenn es zu viele Transaktionen gibt (>=10.000), wird die Adresse übersprungen (wahrscheinlich Service/Exchange).
-# Sie sammelt alle eindeutigen Absender, die an diese Adresse eingezahlt haben (außer Exchanges und die Adresse selbst),
-# einschließlich der Anzahl ihrer Transaktionen und des gesamten überwiesenen ETH-Betrags.
-# Wenn es zu viele verschiedene Absender gibt (> sender_threshold), wird die Adresse übersprungen.
-# Dann prüft sie, ob die Adresse Geld an eine bekannte Exchange weitergeleitet hat.
-# Wenn ja und es mehr als einen Absender gibt, wird ein Cluster mit allen Infos zurückgegeben.
+
+
+
+# Diese Funktion holt alle ERC-20 Token-Transfers für eine Adresse.
+# Optional kann nach einem bestimmten Token-Contract gefiltert werden.
+# Es wird wie bei den ETH-Transaktionen paginiert und das 10.000er-Fenster beachtet.
+def get_all_token_transfers(address, contract_address=None):
+    """Get complete ERC-20 transfer history with pagination"""
+    all_txs = []
+    page = 1
+    params = {
+        'module': 'account',
+        'action': 'tokentx',
+        'address': address,
+        'sort': 'asc',
+        'apikey': ETHERSCAN_API_KEY,
+        'offset': MAX_RESULTS,
+        'page': page
+    }
+    if contract_address:
+        params['contractaddress'] = contract_address
+
+    while True:
+        # Prüfe, ob das 10.000er-Limit erreicht ist
+        if page * MAX_RESULTS > 10000:
+            print(f"⚠️ Etherscan pagination limit reached for {address} (tokentx), only partial data fetched.")
+            break
+        try:
+            # Hole die Transaktionen für die aktuelle Seite
+            data = fetch_etherscan_data(params)
+            time.sleep(REQUEST_DELAY)
+
+            txs = data.get('result', [])
+            if not txs:
+                break
+
+            all_txs.extend(txs)
+
+            if len(txs) < MAX_RESULTS:
+                break
+
+            page += 1
+            params['page'] = page
+
+        except Exception as e:
+            print(f"⚠️ Stopping token transfer fetch due to: {str(e)}")
+            break
+
+    return all_txs
+
+
+
+
+
+# Diese Funktion analysiert eine Deposit-Adresse, um mögliche Cluster zu finden – jetzt
+# sowohl für ETH als auch für ERC-20 Token.
+# - Überspringt Smart Contracts (außer sie sind als Exchange bekannt).
+# - Holt alle ETH-Transaktionen (normal + intern) und zusätzlich alle ERC-20 Transfers.
+# - Zählt EINZAHLUNGEN (to == deposit) von Nicht-Exchanges und nicht von sich selbst.
+#   * ETH: wie bisher über alle ETH-Transaktionen (normal + intern), um Verhalten zu behalten.
+#   * Token: über 'tokentx' (es gibt keine "internen" Token-Events auf Etherscan-API-Ebene).
+# - Prüft, ob die Deposit-Adresse (ETH ODER Token) an eine bekannte Exchange weitergeleitet hat.
+# - Bei > sender_threshold unterschiedlichen Einzahlern wird die Adresse als "Service" übersprungen.
+# - Liefert ein Ergebnisobjekt mit rückwärtskompatiblen Feldern:
+#     'related_users' & 'user_stats' bleiben erhalten (zeigen auch Token-Only-Sender mit ETH=0.0),
+#   sowie optionale Token-Felder für spätere, reichere Ausgaben.
+#
+# Hinweis zur Rückwärtskompatibilität:
+#   Dein bestehendes display_results() erwartet ETH-Felder. Damit es NICHT bricht,
+#   werden Token-Only-Sender ebenfalls in 'related_users'/'user_stats' aufgenommen
+#   (mit 'total_eth' = 0.0). Zusätzlich gibt es optionale Token-Felder für spätere Nutzung.
 
 def analyze_deposit(deposit, exchange_set, sender_threshold=1000):
-    """Analyze deposit address for clustering with transaction metrics"""
+    """Analyze deposit address for clustering with transaction metrics (ETH + ERC-20)"""
     # Überspringe Smart Contracts, außer sie sind als Exchange bekannt
     if deposit not in exchange_set and is_contract(deposit):
         print(f"⏩ Skipping contract address {deposit}")
         return None
+
     try:
         if not deposit:
             return None
         print(f"⌛ Analyzing deposit: {deposit[:8]}...", end='\r')
 
-        # Hole alle Transaktionen für die Deposit-Adresse
+        # 1) ETH-Transaktionen laden (normal + intern, wie in deiner funktionierenden Version)
         normal_txs = get_all_transactions(deposit, 'txlist')
         internal_txs = get_all_transactions(deposit, 'txlistinternal')
         all_txs = normal_txs + internal_txs
 
-        # Überspringe Adressen mit zu vielen Transaktionen
-        if len(all_txs) >= 10000:
-            print(f"⏩ Skipping high-activity address {deposit} (>=10,000 transactions, likely a service)")
+        # 2) ERC-20 Transfers laden
+        token_txs = get_all_token_transfers(deposit)
+
+        # 3) High-Activity Filter (summe aller Events) – entspricht deiner Logik
+        if len(all_txs) + len(token_txs) >= 10000:
+            print(f"⏩ Skipping high-activity address {deposit} (>=10,000 events, likely a service)")
             return None
 
-        # Sammle Absender mit Transaktionsanzahl und Gesamtbetrag
-        sender_stats = {}
+        # 4) EINZAHLER sammeln
+        #    ETH-Einzahler (wie zuvor: aus allen ETH-Txs, nicht nur normal)
+        sender_stats_eth = {}
         for tx in all_txs:
-            tx_from = tx.get('from', '').lower()
-            tx_to = tx.get('to', '').lower()
-            value_eth = int(tx.get('value', 0)) / 10**18  # Umrechnung von Wei zu ETH
-            
-            # Nur echte Einzahlungen von Nicht-Exchanges und nicht von sich selbst
-            if tx_to == deposit and tx_from not in exchange_set and tx_from != deposit:
-                if tx_from not in sender_stats:
-                    sender_stats[tx_from] = {'count': 0, 'total_eth': 0.0}
-                sender_stats[tx_from]['count'] += 1
-                sender_stats[tx_from]['total_eth'] += value_eth
+            tx_from = (tx.get('from') or '').lower()
+            tx_to   = (tx.get('to') or '').lower()
+            if tx_to != deposit or tx_from in exchange_set or tx_from == deposit:
+                continue
+            try:
+                v_wei = int(tx.get('value', '0'))
+            except Exception:
+                v_wei = 0
+            if v_wei <= 0:
+                continue
+            value_eth = v_wei / 10**18
+            if tx_from not in sender_stats_eth:
+                sender_stats_eth[tx_from] = {'count': 0, 'total_eth': 0.0}
+            sender_stats_eth[tx_from]['count']     += 1
+            sender_stats_eth[tx_from]['total_eth'] += value_eth
 
-        # Überspringe Adressen mit zu vielen verschiedenen Absendern
-        if len(sender_stats) > sender_threshold:
-            print(f"⏩ Skipping high-activity address {deposit[:8]} ({len(sender_stats)} unique senders)")
+        #    Token-Einzahler (nur 'tokentx')
+        #    Struktur: {sender: {'count': int, 'tokens': {contract: {'symbol': str, 'amount': float}}}}
+        sender_stats_token = {}
+        for tx in token_txs:
+            tx_from = (tx.get('from') or '').lower()
+            tx_to   = (tx.get('to')   or '').lower()
+            if tx_to != deposit or tx_from in exchange_set or tx_from == deposit:
+                continue
+            try:
+                decimals = int(tx.get('tokenDecimal', '18') or 18)
+                raw      = int(tx.get('value', '0') or '0')
+            except Exception:
+                continue
+            if raw <= 0:
+                continue
+            amount   = raw / (10 ** decimals)
+            symbol   = (tx.get('tokenSymbol')    or '').upper()
+            contract = (tx.get('contractAddress') or '').lower()
+
+            if tx_from not in sender_stats_token:
+                sender_stats_token[tx_from] = {'count': 0, 'tokens': {}}
+            sender_stats_token[tx_from]['count'] += 1
+            tok_entry = sender_stats_token[tx_from]['tokens'].setdefault(
+                contract, {'symbol': symbol, 'amount': 0.0}
+            )
+            tok_entry['amount'] += amount
+
+        # 5) Zu viele verschiedene Einzahler?
+        unique_senders = set(sender_stats_eth.keys()) | set(sender_stats_token.keys())
+        if len(unique_senders) > sender_threshold:
+            print(f"⏩ Skipping high-activity address {deposit[:8]} ({len(unique_senders)} unique senders)")
             return None
 
-        # Prüfe, ob die Deposit-Adresse Geld an eine bekannte Exchange weitergeleitet hat
-        forwarded_to_exchange = None
+        # 6) Weiterleitung zu einer Exchange prüfen
+        #    ETH-Out: (normal + intern)
+        forwarded_to_exchange_eth = None
         for tx in all_txs:
-            tx_from = tx.get('from', '').lower()
-            tx_to = tx.get('to', '').lower()
+            tx_from = (tx.get('from') or '').lower()
+            tx_to   = (tx.get('to')   or '').lower()
             if tx_from == deposit and tx_to in exchange_set:
-                forwarded_to_exchange = tx_to
+                forwarded_to_exchange_eth = tx_to
                 break
 
-        # Wenn ein Cluster gefunden wurde, gib die erweiterten Infos zurück
-        if forwarded_to_exchange and len(sender_stats) > 1:
+        #    Token-Out: (tokentx)
+        forwarded_to_exchange_token = None
+        for tx in token_txs:
+            tx_from = (tx.get('from') or '').lower()
+            tx_to   = (tx.get('to')   or '').lower()
+            # Nur echte Outflows (from == deposit) zur Exchange werten
+            if tx_from == deposit and tx_to in exchange_set:
+                forwarded_to_exchange_token = tx_to
+                break
+
+        # Behalte das Verhalten: Es reicht, wenn EINE der beiden Arten (ETH/Token) eine Weiterleitung zeigt
+        forwarded_to_exchange = forwarded_to_exchange_eth or forwarded_to_exchange_token
+
+        # 7) Cluster-Bedingung: Weiterleitung vorhanden UND mehr als 1 Einzahler
+        if forwarded_to_exchange and len(unique_senders) > 1:
             print(f"✓ Found cluster at {deposit}".ljust(40))
-            # Sortiere Absender nach Transaktionsanzahl (absteigend)
+
+            # Rückwärtskompatibler Merge für 'user_stats'/'related_users'
+            # -> Token-Only-Sender tauchen mit ETH=0.0 auf, 'count' = ETH_count + Token_count
+            merged_stats = {}
+            for addr in unique_senders:
+                eth_part   = sender_stats_eth.get(addr,   {'count': 0, 'total_eth': 0.0})
+                token_part = sender_stats_token.get(addr, {'count': 0})
+                merged_stats[addr] = {
+                    'count'     : eth_part.get('count', 0) + token_part.get('count', 0),
+                    'total_eth' : eth_part.get('total_eth', 0.0)  # ETH-Summe bleibt korrekt
+                }
+
+            # Sortierung wie gehabt: nach Transaktionsanzahl absteigend
             sorted_senders = sorted(
-                sender_stats.items(),
-                key=lambda x: x[1]['count'],
-                reverse=True
+                merged_stats.items(), key=lambda x: x[1]['count'], reverse=True
             )
-            return {
-                'deposit': deposit,
-                'exchange': forwarded_to_exchange,
-                'related_users': [addr for addr, _ in sorted_senders],
-                'user_stats': sender_stats,  # Enthält Count und ETH-Beträge
-                'cluster_size': len(sender_stats)
+
+            # Ergebnisobjekt: alte Felder + optionale Token-Felder (brechen nichts)
+            result = {
+                'deposit'       : deposit,
+                'exchange'      : forwarded_to_exchange,
+                'related_users' : [addr for addr, _ in sorted_senders],
+                'user_stats'    : merged_stats,           # kompatibel zu deiner Anzeige (ETH-Spalte bleibt ETH)
+                'cluster_size'  : len(unique_senders),
+                # optionale Token-Felder (für zukünftige angereicherte Darstellung)
+                'user_stats_token'      : sender_stats_token if sender_stats_token else None,
+                'forwarded_via'         : 'eth' if forwarded_to_exchange_eth else ('erc20' if forwarded_to_exchange_token else None)
             }
+            return result
+
     except Exception as e:
         print(f"⚠️ Failed to analyze {deposit[:8]}: {str(e)[:50]}".ljust(40))
     return None
+
 
 
 # Diese Funktion sucht für eine Nutzeradresse nach möglichen Clustern.
@@ -322,50 +454,78 @@ def cluster_addresses(user_address, exchange_addresses):
 
 
 # Diese Funktion zeigt die gefundenen Cluster übersichtlich an.
-# Für jeden Cluster werden die Größe, die Deposit-Adresse, die zugehörige Exchange (mit Label, falls vorhanden)
-# und die ersten 10 zugehörigen Nutzeradressen mit vollständiger Adresse, Transaktionsanzahl und Gesamtbetrag ausgegeben.
-# Wenn es mehr als 10 Nutzer gibt, wird das ebenfalls angezeigt.
+# Neu: Wenn Token-Informationen vorhanden sind (user_stats_token), werden pro Sender
+#      zusätzlich der "Top Token" (Symbol & Menge) angezeigt. Die ETH-Ausgabe bleibt
+#      unverändert/rückwärtskompatibel.
+# - Exchange-Label wird robust ermittelt (auch wenn exchange_labels=None ist).
+# - Zeigt optional, ob die Weiterleitung via ETH oder ERC-20 erkannt wurde (forwarded_via).
 
 def display_results(clusters, exchange_labels=None):
-    """Professional results presentation with full addresses and transaction metrics"""
+    """Professional results presentation with full addresses, ETH metrics, and optional token metrics"""
     if not clusters:
         print("\n💡 No deposit clusters found")
         return
+
     print(f"\n🎯 Found {len(clusters)} clusters (showing top 10)")
     print("═" * 60)
+
     for i, cluster in enumerate(clusters[:10], 1):
-        print(f"\n🏷️  Cluster #{i} (Size: {cluster['cluster_size']})")
-        print(f"📍 Deposit: {cluster['deposit']}")
-        exchange = cluster['exchange']
-        # Bestimme das Label der Exchange, falls vorhanden
-        label = None
-        if exchange_labels:
-            label_candidate = exchange_labels.get(exchange.lower())
-            if label_candidate and label_candidate != exchange:
-                label = label_candidate
-            else:
-                label = None
-        if not label:
-            label = exchange_labels.get(exchange.lower(), exchange)
-        print(f"🏦 Exchange: {label} ({exchange})")
-        print("\n👥 Related addresses (Transactions | Total ETH):")
-        
-        # Zeige genau 10 Adressen mit voller Länge an
-        for j, addr in enumerate(cluster['related_users'][:10], 1):
-            stats = cluster['user_stats'][addr]
-            print(
-                f"  {j}. {addr} "
-                f"| Tx: {stats['count']} "
-                f"| ETH: {stats['total_eth']:.4f}"
-            )
-            
-        if len(cluster['related_users']) > 10:
-            print(f"  ... and {len(cluster['related_users']) - 10} more")
+        deposit  = cluster.get('deposit')
+        exchange = cluster.get('exchange')
+        fwd_via  = cluster.get('forwarded_via')  # 'eth' | 'erc20' | None
+
+        print(f"\n🏷️  Cluster #{i} (Size: {cluster.get('cluster_size')})")
+        print(f"📍 Deposit: {deposit}")
+
+        # Exchange-Label sicher ermitteln (falls exchange_labels=None -> fallback auf Adresse)
+        if exchange:
+            label = exchange_labels.get(exchange.lower(), exchange) if exchange_labels else exchange
+            print(f"🏦 Exchange: {label} ({exchange})")
+
+        # Optional: zeigen, wodurch die Weiterleitung erkannt wurde
+        if fwd_via in ('eth', 'erc20'):
+            via_txt = 'ETH' if fwd_via == 'eth' else 'ERC-20'
+            print(f"🧭 Forwarded via: {via_txt}")
+
+        # ETH-Teil (wie bisher): Adressen + Transaktionen + gesamte ETH-Menge
+        print("\n👥 Related addresses (Transactions | Total ETH" +
+              ( " | Top Token" if cluster.get('user_stats_token') else "" ) +
+              "):")
+
+        related_users = cluster.get('related_users', []) or []
+        user_stats    = cluster.get('user_stats', {}) or {}
+        user_stats_token = cluster.get('user_stats_token')  # kann None sein
+
+        # Zeige bis zu 10 Adressen mit voller Länge an
+        for j, addr in enumerate(related_users[:10], 1):
+            stats = user_stats.get(addr, {'count': 0, 'total_eth': 0.0})
+            line  = (f"  {j}. {addr} "
+                     f"| Tx: {stats.get('count', 0)} "
+                     f"| ETH: {stats.get('total_eth', 0.0):.4f}")
+
+            # Optionaler Token-Teil: Top-Token pro Sender (nach Menge)
+            if user_stats_token:
+                tok_meta = (user_stats_token.get(addr, {}) or {}).get('tokens', {}) or {}
+                if tok_meta:
+                    # Wähle das Token mit der größten Menge
+                    top_ca, top_info = max(
+                        tok_meta.items(),
+                        key=lambda kv: (kv[1] or {}).get('amount', 0.0)
+                    )
+                    sym = (top_info or {}).get('symbol', '?')
+                    amt = (top_info or {}).get('amount', 0.0)
+                    line += f" | {sym}: {amt:.4f}"
+
+            print(line)
+
+        if len(related_users) > 10:
+            print(f"  ... and {len(related_users) - 10} more")
+
         print("─" * 40)
 
 
 
-    
+
     # Findet alle gespeicherten Adressen, die Gelder an die Zieladresse gesendet haben.
     # Args:
     #    target_address: Die zu analysierende Ethereum-Adresse
@@ -554,4 +714,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
