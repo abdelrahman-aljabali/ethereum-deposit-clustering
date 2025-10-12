@@ -9,8 +9,9 @@ from tqdm import tqdm
 from functools import lru_cache
 
 # Configuration
-ETHERSCAN_API_KEY = 'N7DKBT416X6PBC33UAHE3G6B3479CBGFQQ'
-ETHERSCAN_API_URL = 'https://api.etherscan.io/api'
+ETHERSCAN_API_KEY = 'HHBQ7H5S7VDTTBFTCHFRYHZJBX751C9YFR'
+ETHERSCAN_API_URL = 'https://api.etherscan.io/v2/api'
+ETHERSCAN_CHAIN_ID = '1'  # 1 = Ethereum Mainnet
 CSV_FILE = 'collected_addresses.csv'
 CACHE_DIR = Path('etherscan_cache')
 CACHE_DIR.mkdir(exist_ok=True)
@@ -108,6 +109,7 @@ def get_all_transactions(address, action):
         'address': address,
         'sort': 'asc',
         'apikey': ETHERSCAN_API_KEY,
+        'chainid': ETHERSCAN_CHAIN_ID,
         'offset': MAX_RESULTS,
         'page': page
     }
@@ -154,7 +156,8 @@ def is_contract(address):
             'module': 'contract',
             'action': 'getsourcecode',
             'address': address,
-            'apikey': ETHERSCAN_API_KEY
+            'apikey': ETHERSCAN_API_KEY,
+            'chainid': ETHERSCAN_CHAIN_ID
         }
         response = requests.get(ETHERSCAN_API_URL, params=params, timeout=10)
         response.raise_for_status()
@@ -186,6 +189,7 @@ def get_all_token_transfers(address, contract_address=None):
         'address': address,
         'sort': 'asc',
         'apikey': ETHERSCAN_API_KEY,
+        'chainid': ETHERSCAN_CHAIN_ID,
         'offset': MAX_RESULTS,
         'page': page
     }
