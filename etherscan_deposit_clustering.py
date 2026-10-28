@@ -1,4 +1,5 @@
 import csv
+import os
 import time
 import json
 from pathlib import Path
@@ -9,7 +10,7 @@ from tqdm import tqdm
 from functools import lru_cache
 
 # Configuration
-ETHERSCAN_API_KEY = 'HHBQ7H5S7VDTTBFTCHFRYHZJBX751C9YFR'
+ETHERSCAN_API_KEY = os.environ.get("ETHERSCAN_API_KEY", "")  # export ETHERSCAN_API_KEY=... (see .env.example)
 ETHERSCAN_API_URL = 'https://api.etherscan.io/v2/api'
 ETHERSCAN_CHAIN_ID = '1'  # 1 = Ethereum Mainnet
 CSV_FILE = 'collected_addresses.csv'
